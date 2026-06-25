@@ -1,8 +1,20 @@
-import cv2 #error fix kare 
+import cv2
+import os
+import sys
+import subprocess
 import numpy as np
 from tensorflow.keras.models import load_model
 import random
-import webbrowser
+
+
+def play_song(path):
+    """Open a local audio file with the OS default media player."""
+    if sys.platform.startswith("win"):
+        os.startfile(path)  # type: ignore[attr-defined]
+    elif sys.platform == "darwin":
+        subprocess.Popen(["open", path])
+    else:
+        subprocess.Popen(["xdg-open", path])
 
 # Load trained model
 model = load_model("emotion_model.h5")
@@ -33,13 +45,38 @@ face_cascade = cv2.CascadeClassifier(
 # Start webcam
 cap = cv2.VideoCapture(0)
 
+# Keep the capture buffer small so we always grab the latest frame
+# (prevents lag building up over time).
+cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+
 song_opened = False
+
+# Only run the (expensive) emotion model every N frames instead of every frame.
+PREDICT_EVERY = 5
+frame_count = 0
+last_emotion = None
+
+
+def predict_emotion(roi):
+    """Fast single-image inference.
+
+    Using model(x, training=False) instead of model.predict() avoids the
+    per-call overhead and graph retracing that make predict() slow down
+    progressively when called in a loop.
+    """
+    roi = cv2.resize(roi, (48, 48)) / 255.0
+    roi = np.reshape(roi, (1, 48, 48, 1)).astype("float32")
+    prediction = model(roi, training=False)
+    return emotion_labels[int(np.argmax(prediction))]
+
 
 while True:
     ret, frame = cap.read()
 
     if not ret:
         break
+
+    frame_count += 1
 
     gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
 
@@ -53,20 +90,11 @@ while True:
 
         roi_gray = gray[y:y+h, x:x+w]
 
-        roi_gray = cv2.resize(roi_gray, (48, 48))
+        # Run the model only on selected frames; reuse the last result otherwise.
+        if frame_count % PREDICT_EVERY == 0 or last_emotion is None:
+            last_emotion = predict_emotion(roi_gray)
 
-        roi_gray = roi_gray / 255.0
-
-        roi_gray = np.reshape(
-            roi_gray,
-            (1, 48, 48, 1)
-        )
-
-        prediction = model.predict(roi_gray)
-
-        max_index = int(np.argmax(prediction))
-
-        emotion = emotion_labels[max_index]
+        emotion = last_emotion
 
         # Display emotion
         cv2.rectangle(
@@ -94,7 +122,7 @@ while True:
             print(f"Detected Emotion: {emotion}")
             print(f"Recommended Song: {song}")
 
-            webbrowser.open(song)
+            play_song(song)
 
             song_opened = True
 
@@ -109,4 +137,4 @@ while True:
         break
 
 cap.release()
-cv2.destroyAllWindows
+cv2.destroyAllWindows()
