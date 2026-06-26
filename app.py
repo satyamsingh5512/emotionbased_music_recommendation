@@ -7,14 +7,53 @@ from tensorflow.keras.models import load_model
 import random
 
 
+import shutil
+
+
 def play_song(path):
-    """Open a local audio file with the OS default media player."""
-    if sys.platform.startswith("win"):
-        os.startfile(path)  # type: ignore[attr-defined]
-    elif sys.platform == "darwin":
-        subprocess.Popen(["open", path])
-    else:
-        subprocess.Popen(["xdg-open", path])
+    """Open a local audio file with an available media player.
+
+    Prints clear diagnostics so it's obvious whether the file was found and
+    which player was used.
+    """
+    path = os.path.abspath(path)
+    print(f"[play_song] requested: {path}")
+
+    if not os.path.exists(path):
+        print(f"[play_song] ERROR: file does not exist: {path}")
+        return
+
+    try:
+        if sys.platform.startswith("win"):
+            os.startfile(path)  # type: ignore[attr-defined]
+            print("[play_song] launched via os.startfile")
+            return
+        if sys.platform == "darwin":
+            subprocess.Popen(["open", path])
+            print("[play_song] launched via 'open'")
+            return
+
+        # Linux: try common audio players directly first (more reliable than
+        # relying on a desktop file association), then fall back to xdg-open.
+        for player, args in (
+            ("mpv", ["mpv", "--no-video", path]),
+            ("cvlc", ["cvlc", "--play-and-exit", path]),
+            ("ffplay", ["ffplay", "-nodisp", "-autoexit", path]),
+            ("mpg123", ["mpg123", path]),
+            ("xdg-open", ["xdg-open", path]),
+        ):
+            if shutil.which(player):
+                subprocess.Popen(
+                    args,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                )
+                print(f"[play_song] launched via '{player}'")
+                return
+        print("[play_song] ERROR: no media player found "
+              "(install mpv, vlc, ffmpeg, or mpg123)")
+    except Exception as exc:  # noqa: BLE001
+        print(f"[play_song] ERROR launching player: {exc}")
 
 # Load trained model
 model = load_model("emotion_model.h5")
